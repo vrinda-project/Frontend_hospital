@@ -211,3 +211,143 @@ body {
 .status-dot.disconnected {
   background: #dc3545;
 }
+
+/* Voice Recording Styles */
+.voice-button {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  border: 2px solid #007bff;
+  background: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  transition: all 0.3s ease;
+  margin: 0 5px;
+}
+
+.voice-button:hover {
+  background: #f8f9fa;
+  transform: scale(1.05);
+}
+
+.voice-button.recording {
+  background: #dc3545;
+  border-color: #dc3545;
+  animation: pulse 1.5s infinite;
+}
+
+.voice-button.processing {
+  background: #ffc107;
+  border-color: #ffc107;
+  cursor: not-allowed;
+}
+
+.voice-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(220, 53, 69, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(220, 53, 69, 0);
+  }
+}
+
+.recording-icon {
+  color: white;
+}
+
+.processing-icon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Voice Player Styles */
+.message-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.message-text {
+  flex: 1;
+}
+
+.voice-player-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid #ddd;
+  background: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.voice-player-button:hover {
+  background: #f0f0f0;
+  transform: scale(1.1);
+}
+
+.voice-player-button.playing {
+  background: #007bff;
+  border-color: #007bff;
+  color: white;
+  animation: pulse-blue 1.5s infinite;
+}
+
+.voice-player-button.loading {
+  background: #ffc107;
+  border-color: #ffc107;
+  cursor: not-allowed;
+}
+
+.voice-player-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+@keyframes pulse-blue {
+  0% {
+    box-shadow: 0 0 0 0 rgba(0, 123, 255, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(0, 123, 255, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 123, 255, 0);
+  }
+}
+
+.loading-icon {
+  animation: spin 1s linear infinite;
+}
+
+.error-text {
+  font-size: 10px;
+  color: #dc3545;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  white-space: nowrap;
+}
