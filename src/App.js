@@ -3,8 +3,6 @@ import axios from 'axios';
 import VoiceRecorder from './VoiceRecorder';
 import VoicePlayer from './VoicePlayer';
 
-const BASE_URL = 'https://ai-booking-system.onrender.com';
-
 const FALLBACK_HOSPITALS = [
   {
     id: "fallback-1",
@@ -20,14 +18,7 @@ const FALLBACK_HOSPITALS = [
   }
 ];
 
-const EXAMPLE_MESSAGES = [
-  "I need to book an appointment for my headache",
-  "Cancel my appointment for tomorrow",
-  "What are your visiting hours?",
-  "I want to see a cardiologist",
-  "Show me available doctors",
-  "I need to reschedule my appointment"
-];
+
 
 function App() {
   const [hospitals, setHospitals] = useState([]);
@@ -54,7 +45,7 @@ function App() {
 
   const fetchHospitals = async () => {
     try {
-      const response = await axios.get(`${BASE_URL}/api/chat/hospitals`);
+      const response = await axios.get('http://localhost:8000/api/chat/hospitals');
       setHospitals(response.data.hospitals);
       setApiConnected(true);
       setError('');
@@ -68,7 +59,7 @@ function App() {
 
   const createSession = async (hospitalId) => {
     try {
-      const response = await axios.post(`${BASE_URL}/api/chat/session`, {
+      const response = await axios.post('http://localhost:8000/api/chat/session', {
         hospital_id: hospitalId
       });
       setSessionId(response.data.session_id);
@@ -113,7 +104,7 @@ function App() {
     setLoading(true);
 
     try {
-      const response = await axios.post(`${BASE_URL}/api/chat/message`, {
+      const response = await axios.post('http://localhost:8000/api/chat/message', {
         session_id: sessionId,
         hospital_id: selectedHospital.id,
         message: messageText
@@ -150,9 +141,7 @@ function App() {
     sendMessage();
   };
 
-  const handleExampleClick = (message) => {
-    sendMessage(message);
-  };
+
 
   return (
     <div className="app">
@@ -232,21 +221,7 @@ function App() {
             <div ref={messagesEndRef} />
           </div>
 
-          <div className="example-messages">
-            <h4>Quick Test Messages:</h4>
-            <div className="example-buttons">
-              {EXAMPLE_MESSAGES.map((msg, index) => (
-                <button
-                  key={index}
-                  className="example-button"
-                  onClick={() => handleExampleClick(msg)}
-                  disabled={loading || !sessionId}
-                >
-                  {msg}
-                </button>
-              ))}
-            </div>
-          </div>
+
 
           <form onSubmit={handleSubmit} className="chat-input">
             <input
