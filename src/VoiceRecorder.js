@@ -1,5 +1,4 @@
 import React, { useState, useRef } from 'react';
-import BASE_URL from './config';
 
 const VoiceRecorder = ({ onTranscription, disabled }) => {
   const [isRecording, setIsRecording] = useState(false);
@@ -47,7 +46,7 @@ const VoiceRecorder = ({ onTranscription, disabled }) => {
       const formData = new FormData();
       formData.append('audio_file', audioBlob, 'recording.wav');
 
-      const response = await fetch(`${BASE_URL}/api/v1/speech-to-text`, {
+      const response = await fetch('http://localhost:8000/api/v1/speech-to-text', {
         method: 'POST',
         body: formData,
       });
