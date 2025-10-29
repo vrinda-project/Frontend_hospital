@@ -9,12 +9,11 @@ const VoicePlayer = ({ text, autoPlay = false, onPlayStart, onPlayEnd }) => {
   const [error, setError] = useState(null);
   const [hasAutoPlayed, setHasAutoPlayed] = useState(false);
   const isProcessing = useRef(false);
-  const componentId = useRef(Math.random().toString(36));
+
   const baseUrl = process.env.REACT_APP_BASE_URL;
 
   useEffect(() => {
     if (autoPlay && text && text.trim().length > 0 && !hasAutoPlayed) {
-      // Small delay to ensure component is ready
       setTimeout(() => {
         handlePlay();
         setHasAutoPlayed(true);

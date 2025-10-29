@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import VoiceRecorder from "./VoiceRecorder";
 import VoicePlayer from "./VoicePlayer";
@@ -30,19 +30,7 @@ function App() {
   const messagesEndRef = useRef(null);
   const baseUrl = process.env.REACT_APP_BASE_URL;
 
-  useEffect(() => {
-    fetchHospitals();
-  }, []);
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  const fetchHospitals = async () => {
+  const fetchHospitals = useCallback(async () => {
     try {
       const response = await axios.get(`${baseUrl}/api/chat/hospitals`);
       setHospitals(response.data.hospitals);
@@ -56,6 +44,18 @@ function App() {
         "Backend server not running - Start: python -m uvicorn app.main:app --reload --port 8000"
       );
     }
+  }, [baseUrl]);
+
+  useEffect(() => {
+    fetchHospitals();
+  }, [fetchHospitals]);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   const createSession = async (hospitalId) => {
