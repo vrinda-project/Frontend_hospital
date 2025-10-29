@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from "react";
 
 // Global audio player to avoid React re-render issues
 let globalAudio = null;
@@ -10,6 +10,7 @@ const VoicePlayer = ({ text, autoPlay = false, onPlayStart, onPlayEnd }) => {
   const [hasAutoPlayed, setHasAutoPlayed] = useState(false);
   const isProcessing = useRef(false);
   const componentId = useRef(Math.random().toString(36));
+  const baseUrl = process.env.REACT_APP_BASE_URL;
 
   useEffect(() => {
     if (autoPlay && text && text.trim().length > 0 && !hasAutoPlayed) {
@@ -38,19 +39,19 @@ const VoicePlayer = ({ text, autoPlay = false, onPlayStart, onPlayEnd }) => {
   };
 
   const handlePlay = async () => {
-    console.log('🔊 Voice button clicked!');
-    console.log('Text to convert:', text);
-    
+    console.log("🔊 Voice button clicked!");
+    console.log("Text to convert:", text);
+
     // Prevent duplicate calls
     if (isProcessing.current) {
-      console.log('Already processing, ignoring duplicate call');
+      console.log("Already processing, ignoring duplicate call");
       return;
     }
-    
+
     isProcessing.current = true;
-    
+
     if (isPlaying) {
-      console.log('Stopping current audio');
+      console.log("Stopping current audio");
       stopCurrentAudio();
       setIsPlaying(false);
       if (onPlayEnd) onPlayEnd();
@@ -59,103 +60,106 @@ const VoicePlayer = ({ text, autoPlay = false, onPlayStart, onPlayEnd }) => {
     }
 
     if (!text || text.trim().length === 0) {
-      console.log('No text provided');
-      setError('No text to convert to speech');
+      console.log("No text provided");
+      setError("No text to convert to speech");
       isProcessing.current = false;
       return;
     }
 
-    console.log('Starting TTS process...');
+    console.log("Starting TTS process...");
     setIsLoading(true);
     setError(null);
 
-    console.log('🔊 Calling TTS API with text:', text.substring(0, 50) + '...');
-    
+    console.log("🔊 Calling TTS API with text:", text.substring(0, 50) + "...");
+
     try {
-      const response = await fetch('http://localhost:8000/api/v1/text-to-speech', {
-        method: 'POST',
+      const response = await fetch(`${baseUrl}/api/v1/text-to-speech`, {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           text: text,
-          voice_id: "21m00Tcm4TlvDq8ikWAM" // Rachel voice - professional female
+          voice_id: "21m00Tcm4TlvDq8ikWAM", // Rachel voice - professional female
         }),
       });
-      
-      console.log('TTS API response status:', response.status);
+
+      console.log("TTS API response status:", response.status);
 
       if (response.ok) {
         const audioBlob = await response.blob();
-        console.log('Audio blob size:', audioBlob.size, 'type:', audioBlob.type);
-        
+        console.log(
+          "Audio blob size:",
+          audioBlob.size,
+          "type:",
+          audioBlob.type
+        );
+
         const url = URL.createObjectURL(audioBlob);
-        
+
         // Stop any existing audio
         stopCurrentAudio();
-        
+
         // Create new global audio
         globalAudio = new Audio(url);
-        
+
         globalAudio.onplay = () => {
-          console.log('Audio started playing');
+          console.log("Audio started playing");
           setIsPlaying(true);
           setIsLoading(false);
           isProcessing.current = false;
           if (onPlayStart) onPlayStart();
         };
-        
+
         globalAudio.onended = () => {
-          console.log('Audio ended');
+          console.log("Audio ended");
           setIsPlaying(false);
           if (onPlayEnd) onPlayEnd();
           URL.revokeObjectURL(url);
         };
-        
+
         globalAudio.onerror = (e) => {
-          console.error('Audio error:', e);
-          setError('Audio playback failed');
+          console.error("Audio error:", e);
+          setError("Audio playback failed");
           setIsPlaying(false);
           setIsLoading(false);
           isProcessing.current = false;
           if (onPlayEnd) onPlayEnd();
         };
-        
+
         // Play audio
         try {
           await globalAudio.play();
         } catch (playError) {
-          console.error('Play error:', playError);
-          if (playError.name === 'NotAllowedError') {
-            console.log('Auto-play blocked, user interaction required');
-            setError('Click 🔊 to play');
+          console.error("Play error:", playError);
+          if (playError.name === "NotAllowedError") {
+            console.log("Auto-play blocked, user interaction required");
+            setError("Click 🔊 to play");
           } else {
-            setError('Audio failed');
+            setError("Audio failed");
           }
           setIsLoading(false);
           isProcessing.current = false;
         }
       } else {
         const errorData = await response.json();
-        const errorMessage = errorData.detail || 'Failed to generate speech';
-        
+        const errorMessage = errorData.detail || "Failed to generate speech";
+
         // Handle permission errors specifically
-        if (response.status === 403 && errorMessage.includes('permission')) {
-          setError('Voice feature requires ElevenLabs subscription');
+        if (response.status === 403 && errorMessage.includes("permission")) {
+          setError("Voice feature requires ElevenLabs subscription");
         } else {
           setError(errorMessage);
         }
         setIsLoading(false);
       }
     } catch (error) {
-      console.error('TTS Error:', error);
-      setError('Network error: ' + error.message);
+      console.error("TTS Error:", error);
+      setError("Network error: " + error.message);
       setIsLoading(false);
       isProcessing.current = false;
     }
   };
-
-
 
   if (!text || text.trim().length === 0) {
     return null;
@@ -163,10 +167,12 @@ const VoicePlayer = ({ text, autoPlay = false, onPlayStart, onPlayEnd }) => {
 
   return (
     <button
-      className={`voice-player-button ${isPlaying ? 'playing' : ''} ${isLoading ? 'loading' : ''}`}
+      className={`voice-player-button ${isPlaying ? "playing" : ""} ${
+        isLoading ? "loading" : ""
+      }`}
       onClick={handlePlay}
       disabled={isLoading}
-      title={isPlaying ? 'Stop speaking' : 'Play message aloud'}
+      title={isPlaying ? "Stop speaking" : "Play message aloud"}
     >
       {isLoading ? (
         <span className="loading-icon">⏳</span>
