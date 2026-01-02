@@ -1,17 +1,21 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from "react";
 
-const BrowserVoicePlayer = ({ text, autoPlay = false, onPlayStart, onPlayEnd }) => {
+const BrowserVoicePlayer = ({
+  text,
+  autoPlay = false,
+  onPlayStart,
+  onPlayEnd,
+}) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isSupported, setIsSupported] = useState(false);
   const [error, setError] = useState(null);
   const utteranceRef = useRef(null);
 
   useEffect(() => {
-    // Check if browser supports speech synthesis
-    if ('speechSynthesis' in window) {
+    if ("speechSynthesis" in window) {
       setIsSupported(true);
     } else {
-      setError('Voice not supported in this browser');
+      setError("Voice not supported in this browser");
     }
   }, []);
 
@@ -23,7 +27,7 @@ const BrowserVoicePlayer = ({ text, autoPlay = false, onPlayStart, onPlayEnd }) 
 
   const handlePlay = () => {
     if (!isSupported) {
-      setError('Voice not supported');
+      setError("Voice not supported");
       return;
     }
 
@@ -36,7 +40,7 @@ const BrowserVoicePlayer = ({ text, autoPlay = false, onPlayStart, onPlayEnd }) 
     }
 
     if (!text || text.trim().length === 0) {
-      setError('No text to speak');
+      setError("No text to speak");
       return;
     }
 
@@ -53,13 +57,14 @@ const BrowserVoicePlayer = ({ text, autoPlay = false, onPlayStart, onPlayEnd }) 
 
     // Try to use a female voice if available
     const voices = window.speechSynthesis.getVoices();
-    const femaleVoice = voices.find(voice => 
-      voice.name.toLowerCase().includes('female') || 
-      voice.name.toLowerCase().includes('zira') ||
-      voice.name.toLowerCase().includes('hazel') ||
-      voice.name.toLowerCase().includes('samantha')
+    const femaleVoice = voices.find(
+      (voice) =>
+        voice.name.toLowerCase().includes("female") ||
+        voice.name.toLowerCase().includes("zira") ||
+        voice.name.toLowerCase().includes("hazel") ||
+        voice.name.toLowerCase().includes("samantha")
     );
-    
+
     if (femaleVoice) {
       utterance.voice = femaleVoice;
     }
@@ -76,10 +81,10 @@ const BrowserVoicePlayer = ({ text, autoPlay = false, onPlayStart, onPlayEnd }) 
     };
 
     utterance.onerror = (event) => {
-      setError('Speech failed');
+      setError("Speech failed");
       setIsPlaying(false);
       if (onPlayEnd) onPlayEnd();
-      console.error('Speech synthesis error:', event);
+      console.error("Speech synthesis error:", event);
     };
 
     // Start speaking
@@ -105,9 +110,9 @@ const BrowserVoicePlayer = ({ text, autoPlay = false, onPlayStart, onPlayEnd }) 
 
   return (
     <button
-      className={`voice-player-button ${isPlaying ? 'playing' : ''}`}
+      className={`voice-player-button ${isPlaying ? "playing" : ""}`}
       onClick={handlePlay}
-      title={isPlaying ? 'Stop speaking' : 'Play message aloud (Browser Voice)'}
+      title={isPlaying ? "Stop speaking" : "Play message aloud (Browser Voice)"}
     >
       {isPlaying ? (
         <span className="stop-icon">⏹️</span>

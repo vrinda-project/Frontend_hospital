@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import { useState, useRef } from "react";
 
 const VoiceRecorder = ({ onTranscription, disabled }) => {
   const [isRecording, setIsRecording] = useState(false);
@@ -32,7 +32,6 @@ const VoiceRecorder = ({ onTranscription, disabled }) => {
       setIsRecording(true);
     } catch (error) {
       console.error("Error accessing microphone:", error);
-      alert("Could not access microphone. Please check permissions.");
     }
   };
 
@@ -49,13 +48,10 @@ const VoiceRecorder = ({ onTranscription, disabled }) => {
       const formData = new FormData();
       formData.append("audio_file", audioBlob, "recording.wav");
 
-      const response = await fetch(
-        `${baseUrl}/api/v1/speech-to-text`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
+      const response = await fetch(`${baseUrl}/api/v1/speech-to-text`, {
+        method: "POST",
+        body: formData,
+      });
 
       if (response.ok) {
         const result = await response.json();
@@ -63,11 +59,9 @@ const VoiceRecorder = ({ onTranscription, disabled }) => {
       } else {
         const error = await response.json();
         console.error("Speech-to-text error:", error);
-        alert("Failed to convert speech to text: " + error.detail);
       }
     } catch (error) {
       console.error("Error sending audio:", error);
-      alert("Failed to process audio. Please try again.");
     } finally {
       setIsProcessing(false);
     }

@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import VoiceRecorder from "./VoiceRecorder";
 import VoicePlayer from "./VoicePlayer";
+import VoiceMode from "./VoiceMode";
 
 const FALLBACK_HOSPITALS = [
   {
@@ -28,9 +29,22 @@ function App() {
   const [error, setError] = useState("");
   const [apiConnected, setApiConnected] = useState(false);
   const messagesEndRef = useRef(null);
+
   const baseUrl = process.env.REACT_APP_BASE_URL;
 
-  const fetchHospitals = useCallback(async () => {
+  useEffect(() => {
+    fetchHospitals();
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  const fetchHospitals = async () => {
     try {
       const response = await axios.get(`${baseUrl}/api/chat/hospitals`);
       setHospitals(response.data.hospitals);
@@ -44,25 +58,17 @@ function App() {
         "Backend server not running - Start: python -m uvicorn app.main:app --reload --port 8000"
       );
     }
-  }, [baseUrl]);
-
-  useEffect(() => {
-    fetchHospitals();
-  }, [fetchHospitals]);
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   const createSession = async (hospitalId) => {
+    console.log(`[FRONTEND] Attempting to create session for hospital: ${hospitalId}`);
+    console.log(`[FRONTEND] Using base URL: ${baseUrl}`);
+    
     try {
       const response = await axios.post(`${baseUrl}/api/chat/session`, {
         hospital_id: hospitalId,
       });
+      console.log(`[FRONTEND] Session created successfully:`, response.data);
       setSessionId(response.data.session_id);
       setMessages([
         {
@@ -74,6 +80,7 @@ function App() {
       ]);
       setError("");
     } catch (err) {
+      console.error(`[FRONTEND] Session creation failed:`, err);
       setError("Failed to create chat session - Backend server not running");
       console.error("Session creation error:", err);
     }
@@ -211,12 +218,7 @@ function App() {
                 <div className="message-content">
                   <div className="message-text">{message.text}</div>
                   {!message.isUser && (
-                    <VoicePlayer
-                      text={message.text}
-                      autoPlay={true}
-                      onPlayStart={() => console.log("🔊 AI speaking...")}
-                      onPlayEnd={() => console.log("🔇 AI finished speaking")}
-                    />
+                    <VoicePlayer text={message.text} autoPlay={true} />
                   )}
                 </div>
                 <div className="message-info">
@@ -242,6 +244,8 @@ function App() {
             <div ref={messagesEndRef} />
           </div>
 
+          <VoiceMode sessionId={sessionId} hospitalId={selectedHospital.id} />
+
           <form onSubmit={handleSubmit} className="chat-input">
             <input
               type="text"
@@ -250,7 +254,6 @@ function App() {
               placeholder="Type your message or use voice..."
               disabled={loading || !sessionId}
             />
-
             <button
               type="submit"
               disabled={loading || !sessionId || !inputMessage.trim()}
@@ -260,7 +263,6 @@ function App() {
             <VoiceRecorder
               onTranscription={(text) => {
                 setInputMessage(text);
-                // Auto-send the transcribed message
                 setTimeout(() => sendMessage(text), 100);
               }}
               disabled={loading || !sessionId}
