@@ -10,9 +10,8 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   const voiceUrl = process.env.REACT_APP_VOICE;
 
   const wsRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-  const streamRef = useRef(null);
-  const audioChunksRef = useRef([]);
+  const peerConnectionRef = useRef(null);
+  const localStreamRef = useRef(null);
 
   useEffect(() => {
     if (isActive) {
@@ -37,9 +36,20 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
 
       wsRef.current.onmessage = async (event) => {
         const data = JSON.parse(event.data);
+        console.log("📨 Received message:", data.type);
 
         if (data.type === "ready") {
-          startListening();
+          console.log("🚀 Server ready, starting WebRTC...");
+          setupWebRTC(); // Start WebRTC instead of MediaRecorder
+        } else if (data.type === "answer") {
+          console.log("📨 Received answer from server");
+          // Server responded to our offer
+          await peerConnectionRef.current.setRemoteDescription(data.answer);
+          console.log("✅ Handshake complete! Direct connection established");
+        } else if (data.type === "ice-candidate") {
+          console.log("🧊 Received ICE candidate from server");
+          // Server sent connection info
+          await peerConnectionRef.current.addIceCandidate(data.candidate);
         } else if (data.type === "transcription") {
           setTranscript(data.text);
           setIsListening(false);
@@ -53,55 +63,75 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
     }
   };
 
-  const startListening = async () => {
+  const setupWebRTC = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-
-      mediaRecorderRef.current = new MediaRecorder(stream, {
-        mimeType: "audio/webm",
+      console.log("🔄 Starting WebRTC setup...");
+      
+      // Step 1: Get microphone with noise suppression
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 16000
+        }
       });
+      localStreamRef.current = stream;
+      console.log("✅ Got microphone permission with noise suppression");
 
-      audioChunksRef.current = [];
+      // Step 2: Create WebRTC peer connection (NEW!)
+      peerConnectionRef.current = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+      console.log("✅ Created peer connection");
 
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
+      // Step 3: Add our microphone to the connection
+      stream.getTracks().forEach(track => {
+        peerConnectionRef.current.addTrack(track, stream);
+      });
+      console.log("✅ Added microphone to connection");
+
+      // Step 4: Handle when server sends us audio
+      peerConnectionRef.current.ontrack = (event) => {
+        console.log("✅ Received audio from server");
+        const remoteAudio = new Audio();
+        remoteAudio.srcObject = event.streams[0];
+        remoteAudio.play();
+      };
+
+      // Step 5: Handle connection info exchange
+      peerConnectionRef.current.onicecandidate = (event) => {
+        console.log("🧊 ICE candidate generated");
+        if (event.candidate && wsRef.current?.readyState === WebSocket.OPEN) {
+          console.log("📤 Sending ICE candidate to server");
+          wsRef.current.send(JSON.stringify({
+            type: "ice-candidate",
+            candidate: event.candidate
+          }));
         }
       };
 
-      mediaRecorderRef.current.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, {
-          type: "audio/webm",
-        });
-        const reader = new FileReader();
-
-        reader.onloadend = () => {
-          const base64Audio = reader.result.split(",")[1];
-
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(
-              JSON.stringify({
-                type: "audio",
-                audio: base64Audio,
-              })
-            );
-          }
-        };
-
-        reader.readAsDataURL(audioBlob);
-      };
+      // Step 6: Create offer to start the handshake
+      console.log("🔄 Creating offer...");
+      const offer = await peerConnectionRef.current.createOffer();
+      await peerConnectionRef.current.setLocalDescription(offer);
+      console.log("✅ Created offer");
+      
+      // Step 7: Send offer to server via WebSocket
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        console.log("📤 Sending offer to server");
+        wsRef.current.send(JSON.stringify({
+          type: "offer",
+          offer: offer
+        }));
+        console.log("✅ Sent offer to server");
+      } else {
+        console.error("❌ WebSocket not ready!");
+      }
 
       setIsListening(true);
-      mediaRecorderRef.current.start();
-
-      setTimeout(() => {
-        if (mediaRecorderRef.current?.state === "recording") {
-          mediaRecorderRef.current.stop();
-        }
-      }, 3000);
     } catch (error) {
-      console.error("❌ Microphone error:", error);
+      console.error("❌ WebRTC setup error:", error);
     }
   };
 
@@ -112,9 +142,8 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
 
       audio.onended = () => {
         setIsSpeaking(false);
-        if (isActive) {
-          setTimeout(() => startListening(), 1000);
-        }
+        // For WebRTC, we don't need to restart listening
+        // Audio is continuously streaming
         resolve();
       };
 
@@ -133,11 +162,11 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   };
 
   const cleanup = () => {
-    if (mediaRecorderRef.current?.state === "recording") {
-      mediaRecorderRef.current.stop();
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
     }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
     }
     if (wsRef.current) {
       wsRef.current.close();
