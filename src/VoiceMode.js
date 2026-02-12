@@ -40,15 +40,13 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
 
         if (data.type === "ready") {
           console.log("🚀 Server ready, starting WebRTC...");
-          setupWebRTC(); // Start WebRTC instead of MediaRecorder
+          setupWebRTC();
         } else if (data.type === "answer") {
           console.log("📨 Received answer from server");
-          // Server responded to our offer
           await peerConnectionRef.current.setRemoteDescription(data.answer);
           console.log("✅ Handshake complete! Direct connection established");
         } else if (data.type === "ice-candidate") {
           console.log("🧊 Received ICE candidate from server");
-          // Server sent connection info
           await peerConnectionRef.current.addIceCandidate(data.candidate);
         } else if (data.type === "transcription") {
           setTranscript(data.text);
@@ -67,7 +65,6 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
     try {
       console.log("🔄 Starting WebRTC setup...");
       
-      // Step 1: Get microphone with noise suppression
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -79,19 +76,20 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
       localStreamRef.current = stream;
       console.log("✅ Got microphone permission with noise suppression");
 
-      // Step 2: Create WebRTC peer connection (NEW!)
       peerConnectionRef.current = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' }
+        ]
       });
       console.log("✅ Created peer connection");
 
-      // Step 3: Add our microphone to the connection
       stream.getTracks().forEach(track => {
         peerConnectionRef.current.addTrack(track, stream);
       });
       console.log("✅ Added microphone to connection");
 
-      // Step 4: Handle when server sends us audio
       peerConnectionRef.current.ontrack = (event) => {
         console.log("✅ Received audio from server");
         const remoteAudio = new Audio();
@@ -99,7 +97,6 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
         remoteAudio.play();
       };
 
-      // Step 5: Handle connection info exchange
       peerConnectionRef.current.onicecandidate = (event) => {
         console.log("🧊 ICE candidate generated");
         if (event.candidate && wsRef.current?.readyState === WebSocket.OPEN) {
@@ -111,13 +108,11 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
         }
       };
 
-      // Step 6: Create offer to start the handshake
       console.log("🔄 Creating offer...");
       const offer = await peerConnectionRef.current.createOffer();
       await peerConnectionRef.current.setLocalDescription(offer);
       console.log("✅ Created offer");
       
-      // Step 7: Send offer to server via WebSocket
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         console.log("📤 Sending offer to server");
         wsRef.current.send(JSON.stringify({
@@ -142,8 +137,6 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
 
       audio.onended = () => {
         setIsSpeaking(false);
-        // For WebRTC, we don't need to restart listening
-        // Audio is continuously streaming
         resolve();
       };
 
