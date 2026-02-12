@@ -12,6 +12,7 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   const wsRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
+  const voiceSessionIdRef = useRef(null);
 
   useEffect(() => {
     if (isActive) {
@@ -25,10 +26,10 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
       wsRef.current = new WebSocket(`${voiceUrl}/api/v1/ws/voice-mode`);
 
       wsRef.current.onopen = () => {
+        console.log("📡 WebSocket connected, sending init...");
         wsRef.current.send(
           JSON.stringify({
             type: "init",
-            session_id: sessionId,
             hospital_id: hospitalId,
           })
         );
@@ -39,7 +40,8 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
         console.log("📨 Received message:", data.type);
 
         if (data.type === "ready") {
-          console.log("🚀 Server ready, starting WebRTC...");
+          console.log("🚀 Server ready, session_id:", data.session_id);
+          voiceSessionIdRef.current = data.session_id;
           setupWebRTC();
         } else if (data.type === "answer") {
           console.log("📨 Received answer from server");
@@ -49,12 +51,22 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
           console.log("🧊 Received ICE candidate from server");
           await peerConnectionRef.current.addIceCandidate(data.candidate);
         } else if (data.type === "transcription") {
+          console.log("📝 Transcription received:", data.text);
           setTranscript(data.text);
           setIsListening(false);
         } else if (data.type === "response") {
+          console.log("💬 AI response received:", data.text);
           setAiResponse(data.text);
           await playAudioResponse(data.audio);
         }
+      };
+
+      wsRef.current.onerror = (error) => {
+        console.error("❌ WebSocket error:", error);
+      };
+
+      wsRef.current.onclose = () => {
+        console.log("🔌 WebSocket closed");
       };
     } catch (error) {
       console.error("❌ Voice mode init error:", error);
