@@ -99,8 +99,31 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
 
       stream.getTracks().forEach(track => {
         peerConnectionRef.current.addTrack(track, stream);
+        console.log("🎙️ Audio Track:", {
+          kind: track.kind,
+          enabled: track.enabled,
+          state: track.readyState,
+          settings: track.getSettings()
+        });
       });
       console.log("✅ Added microphone to connection");
+
+      // Monitor audio levels
+      const audioContext = new AudioContext();
+      const analyser = audioContext.createAnalyser();
+      const source = audioContext.createMediaStreamSource(stream);
+      source.connect(analyser);
+      
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const checkAudioLevel = () => {
+        analyser.getByteFrequencyData(dataArray);
+        const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+        if (average > 5) {
+          console.log("🔊 Audio Level:", Math.round(average));
+        }
+        requestAnimationFrame(checkAudioLevel);
+      };
+      checkAudioLevel();
 
       peerConnectionRef.current.ontrack = (event) => {
         console.log("✅ Received audio from server");
