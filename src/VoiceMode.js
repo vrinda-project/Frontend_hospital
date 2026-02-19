@@ -12,6 +12,7 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   const wsRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
+  const audioContextRef = useRef(null);
   const voiceSessionIdRef = useRef(null);
 
   useEffect(() => {
@@ -68,7 +69,8 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
         } else if (data.type === "response") {
           console.log("💬 AI response received:", data.text);
           setAiResponse(data.text);
-          await playAudioResponse(data.audio);
+          // Fix #7: Audio now comes through WebRTC, not base64
+          // The backend will send audio through RTCPeerConnection
         }
       };
 
@@ -110,19 +112,14 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
 
       stream.getTracks().forEach(track => {
         peerConnectionRef.current.addTrack(track, stream);
-        console.log("🎙️ Audio Track:", {
-          kind: track.kind,
-          enabled: track.enabled,
-          state: track.readyState,
-          settings: track.getSettings()
-        });
+        console.log("🎙️ Audio Track added");
       });
       console.log("✅ Added microphone to connection");
 
-      // Monitor audio levels
-      const audioContext = new AudioContext();
-      const analyser = audioContext.createAnalyser();
-      const source = audioContext.createMediaStreamSource(stream);
+      // Fix #6: Create AudioContext and store reference
+      audioContextRef.current = new AudioContext();
+      const analyser = audioContextRef.current.createAnalyser();
+      const source = audioContextRef.current.createMediaStreamSource(stream);
       source.connect(analyser);
       
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
@@ -183,36 +180,16 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
     }
   };
 
-  const playAudioResponse = async (base64Audio) => {
-    return new Promise((resolve) => {
-      setIsSpeaking(true);
-      const audio = new Audio(`data:audio/mpeg;base64,${base64Audio}`);
-
-      audio.onended = () => {
-        setIsSpeaking(false);
-        resolve();
-      };
-
-      audio.onerror = (e) => {
-        console.error("❌ Audio play error:", e);
-        setIsSpeaking(false);
-        resolve();
-      };
-
-      audio.play().catch((e) => {
-        console.error("❌ Play failed:", e);
-        setIsSpeaking(false);
-        resolve();
-      });
-    });
-  };
-
   const cleanup = () => {
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
     }
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
+    }
+    // Fix #6: Close AudioContext to prevent memory leak
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
     }
     if (wsRef.current) {
       wsRef.current.close();
