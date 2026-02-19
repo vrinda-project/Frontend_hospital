@@ -45,11 +45,22 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
           setupWebRTC();
         } else if (data.type === "answer") {
           console.log("📨 Received answer from server");
-          await peerConnectionRef.current.setRemoteDescription(data.answer);
+          const answer = new RTCSessionDescription({
+            sdp: data.answer.sdp,
+            type: data.answer.type
+          });
+          await peerConnectionRef.current.setRemoteDescription(answer);
           console.log("✅ Handshake complete! Direct connection established");
         } else if (data.type === "ice-candidate") {
           console.log("🧊 Received ICE candidate from server");
-          await peerConnectionRef.current.addIceCandidate(data.candidate);
+          if (data.candidate) {
+            const candidate = new RTCIceCandidate({
+              sdpMid: data.candidate.sdpMid,
+              sdpMLineIndex: data.candidate.sdpMLineIndex,
+              candidate: data.candidate.candidate
+            });
+            await peerConnectionRef.current.addIceCandidate(candidate);
+          }
         } else if (data.type === "transcription") {
           console.log("📝 Transcription received:", data.text);
           setTranscript(data.text);
@@ -138,7 +149,11 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
           console.log("📤 Sending ICE candidate to server");
           wsRef.current.send(JSON.stringify({
             type: "ice-candidate",
-            candidate: event.candidate
+            candidate: {
+              sdpMid: event.candidate.sdpMid,
+              sdpMLineIndex: event.candidate.sdpMLineIndex,
+              candidate: event.candidate.candidate
+            }
           }));
         }
       };
@@ -152,7 +167,10 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
         console.log("📤 Sending offer to server");
         wsRef.current.send(JSON.stringify({
           type: "offer",
-          offer: offer
+          offer: {
+            sdp: offer.sdp,
+            type: offer.type
+          }
         }));
         console.log("✅ Sent offer to server");
       } else {
