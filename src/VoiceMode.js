@@ -10,9 +10,8 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   const voiceUrl = process.env.REACT_APP_VOICE;
 
   const wsRef = useRef(null);
-  const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
-  const audioContextRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
   const voiceSessionIdRef = useRef(null);
 
   useEffect(() => {
@@ -37,40 +36,36 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
       };
 
       wsRef.current.onmessage = async (event) => {
-        const data = JSON.parse(event.data);
-        console.log("📨 Received message:", data.type);
+        // Handle text messages
+        if (typeof event.data === "string") {
+          const data = JSON.parse(event.data);
+          console.log("📨 Received message:", data.type);
 
-        if (data.type === "ready") {
-          console.log("🚀 Server ready, session_id:", data.session_id);
-          voiceSessionIdRef.current = data.session_id;
-          setupWebRTC();
-        } else if (data.type === "answer") {
-          console.log("📨 Received answer from server");
-          const answer = new RTCSessionDescription({
-            sdp: data.answer.sdp,
-            type: data.answer.type
-          });
-          await peerConnectionRef.current.setRemoteDescription(answer);
-          console.log("✅ Handshake complete! Direct connection established");
-        } else if (data.type === "ice-candidate") {
-          console.log("🧊 Received ICE candidate from server");
-          if (data.candidate) {
-            const candidate = new RTCIceCandidate({
-              sdpMid: data.candidate.sdpMid,
-              sdpMLineIndex: data.candidate.sdpMLineIndex,
-              candidate: data.candidate.candidate
-            });
-            await peerConnectionRef.current.addIceCandidate(candidate);
+          if (data.type === "ready") {
+            console.log("🚀 Server ready, session_id:", data.session_id);
+            voiceSessionIdRef.current = data.session_id;
+            setupAudioCapture();
+          } else if (data.type === "transcription") {
+            console.log("📝 Transcription received:", data.text);
+            setTranscript(data.text);
+          } else if (data.type === "response") {
+            console.log("💬 AI response received:", data.text);
+            setAiResponse(data.text);
+            setIsSpeaking(true);
+            
+            // Play audio response
+            if (data.audio) {
+              const audioData = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0));
+              const blob = new Blob([audioData], { type: "audio/mpeg" });
+              const url = URL.createObjectURL(blob);
+              const audio = new Audio(url);
+              audio.play();
+              audio.onended = () => {
+                setIsSpeaking(false);
+                setIsListening(true);
+              };
+            }
           }
-        } else if (data.type === "transcription") {
-          console.log("📝 Transcription received:", data.text);
-          setTranscript(data.text);
-          setIsListening(false);
-        } else if (data.type === "response") {
-          console.log("💬 AI response received:", data.text);
-          setAiResponse(data.text);
-          // Fix #7: Audio now comes through WebRTC, not base64
-          // The backend will send audio through RTCPeerConnection
         }
       };
 
@@ -86,9 +81,9 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
     }
   };
 
-  const setupWebRTC = async () => {
+  const setupAudioCapture = async () => {
     try {
-      console.log("🔄 Starting WebRTC setup...");
+      console.log("🔄 Starting audio capture...");
       
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -99,97 +94,43 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
         }
       });
       localStreamRef.current = stream;
-      console.log("✅ Got microphone permission with noise suppression");
+      console.log("✅ Got microphone permission");
 
-      peerConnectionRef.current = new RTCPeerConnection({
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' }
-        ]
-      });
-      console.log("✅ Created peer connection");
-
-      stream.getTracks().forEach(track => {
-        peerConnectionRef.current.addTrack(track, stream);
-        console.log("🎙️ Audio Track added");
-      });
-      console.log("✅ Added microphone to connection");
-
-      // Fix #6: Create AudioContext and store reference
-      audioContextRef.current = new AudioContext();
-      const analyser = audioContextRef.current.createAnalyser();
-      const source = audioContextRef.current.createMediaStreamSource(stream);
-      source.connect(analyser);
+      // Setup MediaRecorder to send audio chunks via WebSocket
+      mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: "audio/webm" });
       
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      const checkAudioLevel = () => {
-        analyser.getByteFrequencyData(dataArray);
-        const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
-        if (average > 5) {
-          console.log("🔊 Audio Level:", Math.round(average));
-        }
-        requestAnimationFrame(checkAudioLevel);
-      };
-      checkAudioLevel();
-
-      peerConnectionRef.current.ontrack = (event) => {
-        console.log("✅ Received audio from server");
-        const remoteAudio = new Audio();
-        remoteAudio.srcObject = event.streams[0];
-        remoteAudio.play();
-      };
-
-      peerConnectionRef.current.onicecandidate = (event) => {
-        console.log("🧊 ICE candidate generated");
-        if (event.candidate && wsRef.current?.readyState === WebSocket.OPEN) {
-          console.log("📤 Sending ICE candidate to server");
-          wsRef.current.send(JSON.stringify({
-            type: "ice-candidate",
-            candidate: {
-              sdpMid: event.candidate.sdpMid,
-              sdpMLineIndex: event.candidate.sdpMLineIndex,
-              candidate: event.candidate.candidate
-            }
-          }));
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(event.data);
+          console.log("📤 Audio chunk sent:", event.data.size, "bytes");
         }
       };
-
-      console.log("🔄 Creating offer...");
-      const offer = await peerConnectionRef.current.createOffer();
-      await peerConnectionRef.current.setLocalDescription(offer);
-      console.log("✅ Created offer");
       
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        console.log("📤 Sending offer to server");
-        wsRef.current.send(JSON.stringify({
-          type: "offer",
-          offer: {
-            sdp: offer.sdp,
-            type: offer.type
-          }
-        }));
-        console.log("✅ Sent offer to server");
-      } else {
-        console.error("❌ WebSocket not ready!");
-      }
-
+      mediaRecorderRef.current.start(100); // Send chunks every 100ms
       setIsListening(true);
+      console.log("✅ Audio recording started");
     } catch (error) {
-      console.error("❌ WebRTC setup error:", error);
+      console.error("❌ Audio capture error:", error);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+      setIsListening(false);
+      console.log("⏹️ Recording stopped");
+      
+      // Notify server that audio recording ended
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: "audio-end" }));
+      }
     }
   };
 
   const cleanup = () => {
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
-    }
+    stopRecording();
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
-    }
-    // Fix #6: Close AudioContext to prevent memory leak
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
     }
     if (wsRef.current) {
       wsRef.current.close();
