@@ -22,18 +22,10 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
 
   const initVoiceMode = async () => {
     try {
-      // Fix WebSocket URL for HTTPS
-      const baseUrl = voiceUrl.replace('https://', '').replace('http://', '');
-      const protocol = voiceUrl.includes('https') ? 'wss' : 'ws';
-      const wsUrl = `${protocol}://${baseUrl}/api/v1/ws/voice-mode`;
-      
-      console.log("🔗 Connecting to:", wsUrl, "(voiceUrl:", voiceUrl, ")");
-      try {
-        wsRef.current = new WebSocket(wsUrl);
-      } catch (e) {
-        console.error("❌ WebSocket creation failed:", e);
-        throw e;
-      }
+      // voiceUrl already has protocol (wss:// or ws://)
+      const wsUrl = `${voiceUrl}/api/v1/ws/voice-mode`;
+      console.log("🔗 Connecting to:", wsUrl);
+      wsRef.current = new WebSocket(wsUrl);
 
       wsRef.current.onopen = () => {
         console.log("📡 WebSocket connected, sending init...");
