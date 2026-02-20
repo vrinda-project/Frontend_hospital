@@ -11,6 +11,7 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   const wsRef = useRef(null);
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
+  const keepAliveRef = useRef(null);
 
   useEffect(() => {
     if (isActive) {
@@ -21,7 +22,13 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
 
   const initVoiceMode = async () => {
     try {
-      wsRef.current = new WebSocket(`${voiceUrl}/api/v1/ws/voice-mode`);
+      // Fix WebSocket URL for HTTPS
+      const protocol = voiceUrl.includes('https') ? 'wss' : 'ws';
+      const baseUrl = voiceUrl.replace('https://', '').replace('http://', '');
+      const wsUrl = `${protocol}://${baseUrl}/api/v1/ws/voice-mode`;
+      
+      console.log("🔗 Connecting to:", wsUrl);
+      wsRef.current = new WebSocket(wsUrl);
 
       wsRef.current.onopen = () => {
         console.log("📡 WebSocket connected, sending init...");
@@ -31,6 +38,13 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
             hospital_id: hospitalId,
           })
         );
+        
+        // Keep connection alive
+        keepAliveRef.current = setInterval(() => {
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: "ping" }));
+          }
+        }, 30000);
       };
 
       wsRef.current.onmessage = async (event) => {
@@ -72,6 +86,10 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
 
       wsRef.current.onclose = () => {
         console.log("🔌 WebSocket closed");
+        setIsListening(false);
+        if (keepAliveRef.current) {
+          clearInterval(keepAliveRef.current);
+        }
       };
     } catch (error) {
       console.error("❌ Voice mode init error:", error);
@@ -140,6 +158,9 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   };
 
   const cleanup = () => {
+    if (keepAliveRef.current) {
+      clearInterval(keepAliveRef.current);
+    }
     if (pcRef.current) {
       pcRef.current.close();
     }
