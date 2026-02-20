@@ -12,6 +12,7 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
   const keepAliveRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
 
   useEffect(() => {
     if (isActive) {
@@ -22,7 +23,6 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
 
   const initVoiceMode = async () => {
     try {
-      // voiceUrl already has protocol (wss:// or ws://)
       const wsUrl = `${voiceUrl}/api/v1/ws/voice-mode`;
       console.log("🔗 Connecting to:", wsUrl);
       wsRef.current = new WebSocket(wsUrl);
@@ -36,7 +36,6 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
           })
         );
         
-        // Keep connection alive
         keepAliveRef.current = setInterval(() => {
           if (wsRef.current?.readyState === WebSocket.OPEN) {
             wsRef.current.send(JSON.stringify({ type: "ping" }));
