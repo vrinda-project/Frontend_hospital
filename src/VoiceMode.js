@@ -3,16 +3,14 @@ import { useState, useRef, useEffect } from "react";
 const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   const [isActive, setIsActive] = useState(false);
   const [isListening, setIsListening] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [aiResponse, setAiResponse] = useState("");
 
   const voiceUrl = process.env.REACT_APP_VOICE;
 
   const wsRef = useRef(null);
+  const pcRef = useRef(null);
   const localStreamRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-  const voiceSessionIdRef = useRef(null);
 
   useEffect(() => {
     if (isActive) {
@@ -36,35 +34,34 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
       };
 
       wsRef.current.onmessage = async (event) => {
-        // Handle text messages
-        if (typeof event.data === "string") {
-          const data = JSON.parse(event.data);
-          console.log("📨 Received message:", data.type);
+        const data = JSON.parse(event.data);
+        console.log("📨 Received message:", data.type);
 
-          if (data.type === "ready") {
-            console.log("🚀 Server ready, session_id:", data.session_id);
-            voiceSessionIdRef.current = data.session_id;
-            setupAudioCapture();
-          } else if (data.type === "transcription") {
-            console.log("📝 Transcription received:", data.text);
-            setTranscript(data.text);
-          } else if (data.type === "response") {
-            console.log("💬 AI response received:", data.text);
-            setAiResponse(data.text);
-            setIsSpeaking(true);
-            
-            // Play audio response
-            if (data.audio) {
-              const audioData = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0));
-              const blob = new Blob([audioData], { type: "audio/mpeg" });
-              const url = URL.createObjectURL(blob);
-              const audio = new Audio(url);
-              audio.play();
-              audio.onended = () => {
-                setIsSpeaking(false);
-                setIsListening(true);
-              };
-            }
+        if (data.type === "ready") {
+          console.log("🚀 Server ready");
+          setupWebRTC();
+        } else if (data.type === "answer") {
+          console.log("📨 Received answer from server");
+          const answer = new RTCSessionDescription({
+            sdp: data.answer.sdp,
+            type: data.answer.type
+          });
+          await pcRef.current.setRemoteDescription(answer);
+          console.log("✅ WebRTC connection established!");
+        } else if (data.type === "transcription") {
+          console.log("📝 Transcription received:", data.text);
+          setTranscript(data.text);
+          setIsListening(false);
+        } else if (data.type === "response") {
+          console.log("💬 AI response received:", data.text);
+          setAiResponse(data.text);
+          
+          if (data.audio) {
+            const audioData = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0));
+            const blob = new Blob([audioData], { type: "audio/mpeg" });
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            audio.play();
           }
         }
       };
@@ -81,9 +78,9 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
     }
   };
 
-  const setupAudioCapture = async () => {
+  const setupWebRTC = async () => {
     try {
-      console.log("🔄 Starting audio capture...");
+      console.log("🔄 Setting up WebRTC...");
       
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -96,39 +93,56 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
       localStreamRef.current = stream;
       console.log("✅ Got microphone permission");
 
-      // Setup MediaRecorder to send audio chunks via WebSocket
-      mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: "audio/webm" });
-      
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(event.data);
-          console.log("📤 Audio chunk sent:", event.data.size, "bytes");
+      pcRef.current = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" }
+        ]
+      });
+      console.log("✅ Created peer connection");
+
+      stream.getTracks().forEach(track => {
+        pcRef.current.addTrack(track, stream);
+        console.log("🎙️ Audio track added to WebRTC");
+      });
+
+      pcRef.current.onicecandidate = (event) => {
+        if (event.candidate && wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({
+            type: "ice-candidate",
+            candidate: {
+              sdpMid: event.candidate.sdpMid,
+              sdpMLineIndex: event.candidate.sdpMLineIndex,
+              candidate: event.candidate.candidate
+            }
+          }));
         }
       };
-      
-      mediaRecorderRef.current.start(100); // Send chunks every 100ms
-      setIsListening(true);
-      console.log("✅ Audio recording started");
-    } catch (error) {
-      console.error("❌ Audio capture error:", error);
-    }
-  };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-      setIsListening(false);
-      console.log("⏹️ Recording stopped");
+      console.log("🔄 Creating WebRTC offer...");
+      const offer = await pcRef.current.createOffer();
+      await pcRef.current.setLocalDescription(offer);
+      console.log("✅ Created offer");
       
-      // Notify server that audio recording ended
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "audio-end" }));
-      }
+      wsRef.current.send(JSON.stringify({
+        type: "offer",
+        offer: {
+          sdp: offer.sdp,
+          type: offer.type
+        }
+      }));
+      console.log("📤 Sent offer to server");
+
+      setIsListening(true);
+    } catch (error) {
+      console.error("❌ WebRTC setup error:", error);
     }
   };
 
   const cleanup = () => {
-    stopRecording();
+    if (pcRef.current) {
+      pcRef.current.close();
+    }
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
     }
@@ -142,7 +156,6 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
       cleanup();
       setIsActive(false);
       setIsListening(false);
-      setIsSpeaking(false);
       onClose?.();
     } else {
       setIsActive(true);
@@ -160,14 +173,9 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
 
       {isActive && (
         <div className="voice-mode-status">
-          <div
-            className={`status-indicator ${
-              isListening ? "listening" : isSpeaking ? "speaking" : "idle"
-            }`}
-          >
+          <div className={`status-indicator ${isListening ? "listening" : "idle"}`}>
             {isListening && "🎤 Listening..."}
-            {isSpeaking && "🔊 AI Speaking..."}
-            {!isListening && !isSpeaking && "⏸️ Ready"}
+            {!isListening && "⏸️ Ready"}
           </div>
 
           {transcript && (
