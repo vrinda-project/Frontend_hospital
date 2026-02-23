@@ -11,8 +11,8 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   const voiceUrl = process.env.REACT_APP_VOICE;
 
   const wsRef = useRef(null);
-  const pcRef = useRef(null);
-  const localStreamRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
   const keepAliveRef = useRef(null);
   const audioQueueRef = useRef([]);
   const isPlayingRef = useRef(false);
@@ -61,36 +61,11 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
 
       switch (data.type) {
         case "ready":
-          setupWebRTC();
-          break;
-
-        case "answer":
-          if (pcRef.current) {
-            pcRef.current.setRemoteDescription(
-              new RTCSessionDescription({ sdp: data.answer.sdp, type: data.answer.type })
-            );
-            console.log("✅ WebRTC answer set");
-          }
-          break;
-
-        case "ice-candidate":
-          if (pcRef.current && data.candidate) {
-            try {
-              pcRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
-            } catch (e) {
-              console.debug("ICE candidate skipped:", e);
-            }
-          }
-          break;
-
-        case "listening_start":
           setIsListening(true);
-          setIsProcessing(false);
           break;
 
-        case "listening_stop":
-          setIsListening(false);
-          setIsProcessing(true);
+        case "recording_started":
+          setIsListening(true);
           break;
 
         case "transcription":
@@ -128,6 +103,7 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
     console.log("🔗 Connecting to:", wsUrl);
 
     wsRef.current = new WebSocket(wsUrl);
+    wsRef.current.binaryType = "arraybuffer";
 
     wsRef.current.onopen = () => {
       console.log("📡 WS connected");
@@ -157,7 +133,7 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
     };
   }, [voiceUrl, hospitalId, handleMessage]);
 
-  const setupWebRTC = useCallback(async () => {
+  const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -168,67 +144,54 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
           channelCount: 1,
         },
       });
-      localStreamRef.current = stream;
 
-      const pc = new RTCPeerConnection({
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-        ],
-      });
-      pcRef.current = pc;
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
 
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-
-      pc.onicecandidate = ({ candidate }) => {
-        if (candidate && wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(
-            JSON.stringify({
-              type: "ice-candidate",
-              candidate: {
-                candidate: candidate.candidate,
-                sdpMid: candidate.sdpMid,
-                sdpMLineIndex: candidate.sdpMLineIndex,
-              },
-            })
-          );
-        }
+      mediaRecorder.ondataavailable = (event) => {
+        audioChunksRef.current.push(event.data);
       };
 
-      pc.onconnectionstatechange = () => {
-        console.log("🔗 PC state:", pc.connectionState);
-        if (pc.connectionState === "connected") setIsListening(true);
-        if (["failed", "disconnected", "closed"].includes(pc.connectionState)) {
-          setIsListening(false);
+      mediaRecorder.onstop = async () => {
+        const blob = new Blob(audioChunksRef.current, { type: "audio/wav" });
+        const arrayBuffer = await blob.arrayBuffer();
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(arrayBuffer);
+          console.log("📤 Sent audio to server");
         }
+        stream.getTracks().forEach((t) => t.stop());
       };
 
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      wsRef.current.send(
-        JSON.stringify({
-          type: "offer",
-          offer: { sdp: offer.sdp, type: offer.type },
-        })
-      );
-      console.log("📤 Offer sent");
+      wsRef.current.send(JSON.stringify({ type: "start_recording" }));
+      mediaRecorder.start();
+      setIsListening(true);
+      console.log("🎤 Recording started");
     } catch (err) {
-      console.error("❌ WebRTC setup error:", err);
+      console.error("❌ Recording error:", err);
       setError(
         err.name === "NotAllowedError"
           ? "Microphone permission denied."
-          : "Failed to set up audio. Please try again."
+          : "Failed to start recording."
       );
+    }
+  }, []);
+
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+      wsRef.current.send(JSON.stringify({ type: "stop_recording" }));
+      setIsListening(false);
+      setIsProcessing(true);
+      console.log("⏹️ Recording stopped");
     }
   }, []);
 
   const cleanup = useCallback(() => {
     clearInterval(keepAliveRef.current);
-    pcRef.current?.close();
-    pcRef.current = null;
-    localStreamRef.current?.getTracks().forEach((t) => t.stop());
-    localStreamRef.current = null;
+    if (mediaRecorderRef.current?.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
     wsRef.current?.close();
     wsRef.current = null;
     audioQueueRef.current = [];
@@ -280,6 +243,17 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
           </div>
 
           {error && <div className="voice-error">⚠️ {error}</div>}
+
+          {isListening && (
+            <div className="recording-controls">
+              <button onClick={startRecording} className="record-btn">
+                🔴 Start Recording
+              </button>
+              <button onClick={stopRecording} className="stop-btn">
+                ⏹️ Stop Recording
+              </button>
+            </div>
+          )}
 
           {transcript && (
             <div className="transcript">
