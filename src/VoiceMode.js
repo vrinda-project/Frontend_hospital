@@ -14,6 +14,7 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const keepAliveRef = useRef(null);
+  const recordingTimeoutRef = useRef(null);
   const audioQueueRef = useRef([]);
   const isPlayingRef = useRef(false);
 
@@ -65,11 +66,6 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
           setIsListening(true);
           break;
 
-        case "recording_started":
-          console.log("✅ Recording started");
-          setIsListening(true);
-          break;
-
         case "transcription":
           console.log("📝 Transcription:", data.text);
           setTranscript(data.text);
@@ -93,7 +89,6 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
           break;
 
         case "pong":
-          console.log("🏓 Pong");
           break;
 
         default:
@@ -105,8 +100,6 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
 
   const initVoiceMode = useCallback(async () => {
     console.log("🔧 Initializing voice mode...");
-    console.log("📍 voiceUrl:", voiceUrl);
-    console.log("📍 hospitalId:", hospitalId);
     setError("");
     const wsUrl = `${voiceUrl}/api/v1/ws/voice-mode`;
     console.log("🔗 Connecting to:", wsUrl);
@@ -116,9 +109,7 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
 
     wsRef.current.onopen = () => {
       console.log("✅ WebSocket connected");
-      const initMsg = { type: "init", hospital_id: hospitalId };
-      console.log("📤 Sending init:", initMsg);
-      wsRef.current.send(JSON.stringify(initMsg));
+      wsRef.current.send(JSON.stringify({ type: "init", hospital_id: hospitalId }));
 
       keepAliveRef.current = setInterval(() => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -142,8 +133,8 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
     };
   }, [voiceUrl, hospitalId, handleMessage]);
 
-  const startRecording = useCallback(async () => {
-    console.log("🎤 Starting recording...");
+  const startContinuousRecording = useCallback(async () => {
+    console.log("🎤 Starting continuous recording...");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -156,33 +147,32 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
       });
       console.log("✅ Got microphone stream");
 
-      const mediaRecorder = new MediaRecorder(stream);
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
       mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
 
       mediaRecorder.ondataavailable = (event) => {
-        console.log("📥 Audio chunk:", event.data.size, "bytes");
-        audioChunksRef.current.push(event.data);
-      };
-
-      mediaRecorder.onstop = async () => {
-        console.log("⏹️ Recording stopped, processing...");
-        const blob = new Blob(audioChunksRef.current, { type: "audio/wav" });
-        console.log("📦 Audio blob size:", blob.size);
-        const arrayBuffer = await blob.arrayBuffer();
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          console.log("📤 Sending audio:", arrayBuffer.byteLength, "bytes");
-          wsRef.current.send(arrayBuffer);
-        } else {
-          console.error("❌ WebSocket not open, state:", wsRef.current?.readyState);
+        if (event.data.size > 0) {
+          console.log("📥 Audio chunk:", event.data.size, "bytes");
+          audioChunksRef.current.push(event.data);
         }
-        stream.getTracks().forEach((t) => t.stop());
       };
 
-      wsRef.current.send(JSON.stringify({ type: "start_recording" }));
-      mediaRecorder.start();
+      mediaRecorder.start(100); // Collect data every 100ms
       setIsListening(true);
       console.log("🎤 Recording started");
+
+      // Auto-send audio every 6 seconds
+      recordingTimeoutRef.current = setInterval(async () => {
+        if (audioChunksRef.current.length > 0) {
+          const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+          const arrayBuffer = await blob.arrayBuffer();
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            console.log("📤 Sending audio:", arrayBuffer.byteLength, "bytes");
+            wsRef.current.send(arrayBuffer);
+          }
+          audioChunksRef.current = [];
+        }
+      }, 6000);
     } catch (err) {
       console.error("❌ Recording error:", err);
       setError(
@@ -193,21 +183,13 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
     }
   }, []);
 
-  const stopRecording = useCallback(() => {
-    console.log("⏹️ Stopping recording...");
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-      wsRef.current.send(JSON.stringify({ type: "stop_recording" }));
-      setIsListening(false);
-      setIsProcessing(true);
-    }
-  }, []);
-
   const cleanup = useCallback(() => {
     console.log("🧹 Cleaning up...");
     clearInterval(keepAliveRef.current);
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state && mediaRecorderRef.current.state !== "inactive") {
+    clearInterval(recordingTimeoutRef.current);
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
     }
     wsRef.current?.close();
     wsRef.current = null;
@@ -217,7 +199,10 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
 
   useEffect(() => {
     console.log("📌 isActive changed:", isActive);
-    if (isActive) initVoiceMode();
+    if (isActive) {
+      initVoiceMode();
+      setTimeout(() => startContinuousRecording(), 500);
+    }
     return cleanup;
   }, [isActive]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -262,17 +247,6 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
           </div>
 
           {error && <div className="voice-error">⚠️ {error}</div>}
-
-          {isListening && (
-            <div className="recording-controls">
-              <button onClick={startRecording} className="record-btn">
-                🔴 Start Recording
-              </button>
-              <button onClick={stopRecording} className="stop-btn">
-                ⏹️ Stop Recording
-              </button>
-            </div>
-          )}
 
           {transcript && (
             <div className="transcript">
