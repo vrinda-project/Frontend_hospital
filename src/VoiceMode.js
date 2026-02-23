@@ -206,7 +206,7 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   const cleanup = useCallback(() => {
     console.log("🧹 Cleaning up...");
     clearInterval(keepAliveRef.current);
-    if (mediaRecorderRef.current?.state !== "inactive") {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }
     wsRef.current?.close();
