@@ -1,10 +1,12 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 
 const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   const [isActive, setIsActive] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [aiResponse, setAiResponse] = useState("");
+  const [error, setError] = useState("");
 
   const voiceUrl = process.env.REACT_APP_VOICE;
 
@@ -12,171 +14,250 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
   const keepAliveRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
+  const audioQueueRef = useRef([]);
+  const isPlayingRef = useRef(false);
 
-  useEffect(() => {
-    if (isActive) {
-      initVoiceMode();
-    }
-    return () => cleanup();
-  }, [isActive]);
+  const playNextAudio = useCallback(() => {
+    if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
+    isPlayingRef.current = true;
+    const url = audioQueueRef.current.shift();
+    const audio = new Audio(url);
+    audio.onended = () => {
+      URL.revokeObjectURL(url);
+      isPlayingRef.current = false;
+      playNextAudio();
+    };
+    audio.onerror = () => {
+      isPlayingRef.current = false;
+      playNextAudio();
+    };
+    audio.play().catch(console.error);
+  }, []);
 
-  const initVoiceMode = async () => {
-    try {
-      const wsUrl = `${voiceUrl}/api/v1/ws/voice-mode`;
-      console.log("🔗 Connecting to:", wsUrl);
-      wsRef.current = new WebSocket(wsUrl);
+  const enqueueAudio = useCallback(
+    (base64Audio) => {
+      const audioData = Uint8Array.from(atob(base64Audio), (c) =>
+        c.charCodeAt(0)
+      );
+      const blob = new Blob([audioData], { type: "audio/mpeg" });
+      const url = URL.createObjectURL(blob);
+      audioQueueRef.current.push(url);
+      playNextAudio();
+    },
+    [playNextAudio]
+  );
 
-      wsRef.current.onopen = () => {
-        console.log("📡 WebSocket connected, sending init...");
-        wsRef.current.send(
-          JSON.stringify({
-            type: "init",
-            hospital_id: hospitalId,
-          })
-        );
-        
-        keepAliveRef.current = setInterval(() => {
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({ type: "ping" }));
-          }
-        }, 30000);
-      };
+  const handleMessage = useCallback(
+    (event) => {
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        console.error("Failed to parse WS message");
+        return;
+      }
 
-      wsRef.current.onmessage = async (event) => {
-        const data = JSON.parse(event.data);
-        console.log("📨 Received message:", data.type);
+      console.log("📨 Received:", data.type);
 
-        if (data.type === "ready") {
-          console.log("🚀 Server ready");
+      switch (data.type) {
+        case "ready":
           setupWebRTC();
-        } else if (data.type === "answer") {
-          console.log("📨 Received answer from server");
-          const answer = new RTCSessionDescription({
-            sdp: data.answer.sdp,
-            type: data.answer.type
-          });
-          await pcRef.current.setRemoteDescription(answer);
-          console.log("✅ WebRTC connection established!");
-        } else if (data.type === "transcription") {
-          console.log("📝 Transcription received:", data.text);
+          break;
+
+        case "answer":
+          if (pcRef.current) {
+            pcRef.current.setRemoteDescription(
+              new RTCSessionDescription({ sdp: data.answer.sdp, type: data.answer.type })
+            );
+            console.log("✅ WebRTC answer set");
+          }
+          break;
+
+        case "ice-candidate":
+          if (pcRef.current && data.candidate) {
+            try {
+              pcRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
+            } catch (e) {
+              console.debug("ICE candidate skipped:", e);
+            }
+          }
+          break;
+
+        case "listening_start":
+          setIsListening(true);
+          setIsProcessing(false);
+          break;
+
+        case "listening_stop":
+          setIsListening(false);
+          setIsProcessing(true);
+          break;
+
+        case "transcription":
           setTranscript(data.text);
           setIsListening(false);
-        } else if (data.type === "response") {
-          console.log("💬 AI response received:", data.text);
+          setIsProcessing(true);
+          break;
+
+        case "response":
           setAiResponse(data.text);
-          
-          if (data.audio) {
-            const audioData = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0));
-            const blob = new Blob([audioData], { type: "audio/mpeg" });
-            const url = URL.createObjectURL(blob);
-            const audio = new Audio(url);
-            audio.play();
-          }
+          setIsProcessing(false);
+          setIsListening(true);
+          if (data.audio) enqueueAudio(data.audio);
+          break;
+
+        case "error":
+          setError(data.message || "Unknown error");
+          setIsProcessing(false);
+          setIsListening(true);
+          break;
+
+        case "pong":
+          break;
+
+        default:
+          console.warn("Unknown message type:", data.type);
+      }
+    },
+    [enqueueAudio]
+  );
+
+  const initVoiceMode = useCallback(async () => {
+    setError("");
+    const wsUrl = `${voiceUrl}/api/v1/ws/voice-mode`;
+    console.log("🔗 Connecting to:", wsUrl);
+
+    wsRef.current = new WebSocket(wsUrl);
+
+    wsRef.current.onopen = () => {
+      console.log("📡 WS connected");
+      wsRef.current.send(
+        JSON.stringify({ type: "init", hospital_id: hospitalId })
+      );
+
+      keepAliveRef.current = setInterval(() => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ type: "ping" }));
         }
-      };
+      }, 25000);
+    };
 
-      wsRef.current.onerror = (error) => {
-        console.error("❌ WebSocket error:", error);
-      };
+    wsRef.current.onmessage = handleMessage;
 
-      wsRef.current.onclose = () => {
-        console.log("🔌 WebSocket closed");
-        setIsListening(false);
-        if (keepAliveRef.current) {
-          clearInterval(keepAliveRef.current);
-        }
-      };
-    } catch (error) {
-      console.error("❌ Voice mode init error:", error);
-    }
-  };
+    wsRef.current.onerror = (e) => {
+      console.error("❌ WebSocket error:", e);
+      setError("Connection error. Please try again.");
+    };
 
-  const setupWebRTC = async () => {
+    wsRef.current.onclose = () => {
+      console.log("🔌 WS closed");
+      setIsListening(false);
+      setIsProcessing(false);
+      clearInterval(keepAliveRef.current);
+    };
+  }, [voiceUrl, hospitalId, handleMessage]);
+
+  const setupWebRTC = useCallback(async () => {
     try {
-      console.log("🔄 Setting up WebRTC...");
-      
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
-          sampleRate: 16000
-        }
+          sampleRate: 16000,
+          channelCount: 1,
+        },
       });
       localStreamRef.current = stream;
-      console.log("✅ Got microphone permission");
 
-      pcRef.current = new RTCPeerConnection({
+      const pc = new RTCPeerConnection({
         iceServers: [
           { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" }
-        ]
+          { urls: "stun:stun1.l.google.com:19302" },
+        ],
       });
-      console.log("✅ Created peer connection");
+      pcRef.current = pc;
 
-      stream.getTracks().forEach(track => {
-        pcRef.current.addTrack(track, stream);
-        console.log("🎙️ Audio track added to WebRTC");
-      });
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-      pcRef.current.onicecandidate = (event) => {
-        if (event.candidate && wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({
-            type: "ice-candidate",
-            candidate: {
-              sdpMid: event.candidate.sdpMid,
-              sdpMLineIndex: event.candidate.sdpMLineIndex,
-              candidate: event.candidate.candidate
-            }
-          }));
+      pc.onicecandidate = ({ candidate }) => {
+        if (candidate && wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(
+            JSON.stringify({
+              type: "ice-candidate",
+              candidate: {
+                candidate: candidate.candidate,
+                sdpMid: candidate.sdpMid,
+                sdpMLineIndex: candidate.sdpMLineIndex,
+              },
+            })
+          );
         }
       };
 
-      console.log("🔄 Creating WebRTC offer...");
-      const offer = await pcRef.current.createOffer();
-      await pcRef.current.setLocalDescription(offer);
-      console.log("✅ Created offer");
-      
-      wsRef.current.send(JSON.stringify({
-        type: "offer",
-        offer: {
-          sdp: offer.sdp,
-          type: offer.type
+      pc.onconnectionstatechange = () => {
+        console.log("🔗 PC state:", pc.connectionState);
+        if (pc.connectionState === "connected") setIsListening(true);
+        if (["failed", "disconnected", "closed"].includes(pc.connectionState)) {
+          setIsListening(false);
         }
-      }));
-      console.log("📤 Sent offer to server");
+      };
 
-      setIsListening(true);
-    } catch (error) {
-      console.error("❌ WebRTC setup error:", error);
-    }
-  };
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
 
-  const cleanup = () => {
-    if (keepAliveRef.current) {
-      clearInterval(keepAliveRef.current);
+      wsRef.current.send(
+        JSON.stringify({
+          type: "offer",
+          offer: { sdp: offer.sdp, type: offer.type },
+        })
+      );
+      console.log("📤 Offer sent");
+    } catch (err) {
+      console.error("❌ WebRTC setup error:", err);
+      setError(
+        err.name === "NotAllowedError"
+          ? "Microphone permission denied."
+          : "Failed to set up audio. Please try again."
+      );
     }
-    if (pcRef.current) {
-      pcRef.current.close();
-    }
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => track.stop());
-    }
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
-  };
+  }, []);
+
+  const cleanup = useCallback(() => {
+    clearInterval(keepAliveRef.current);
+    pcRef.current?.close();
+    pcRef.current = null;
+    localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    localStreamRef.current = null;
+    wsRef.current?.close();
+    wsRef.current = null;
+    audioQueueRef.current = [];
+    isPlayingRef.current = false;
+  }, []);
+
+  useEffect(() => {
+    if (isActive) initVoiceMode();
+    return cleanup;
+  }, [isActive]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleVoiceMode = () => {
     if (isActive) {
       cleanup();
       setIsActive(false);
       setIsListening(false);
+      setIsProcessing(false);
+      setTranscript("");
+      setAiResponse("");
       onClose?.();
     } else {
       setIsActive(true);
     }
+  };
+
+  const statusLabel = () => {
+    if (isProcessing) return "⏳ Processing...";
+    if (isListening) return "🎤 Listening...";
+    return "⏸️ Ready";
   };
 
   return (
@@ -190,10 +271,15 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
 
       {isActive && (
         <div className="voice-mode-status">
-          <div className={`status-indicator ${isListening ? "listening" : "idle"}`}>
-            {isListening && "🎤 Listening..."}
-            {!isListening && "⏸️ Ready"}
+          <div
+            className={`status-indicator ${
+              isListening ? "listening" : isProcessing ? "processing" : "idle"
+            }`}
+          >
+            {statusLabel()}
           </div>
+
+          {error && <div className="voice-error">⚠️ {error}</div>}
 
           {transcript && (
             <div className="transcript">
