@@ -57,24 +57,28 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
         return;
       }
 
-      console.log("📨 Received:", data.type);
+      console.log("📨 Received:", data.type, data);
 
       switch (data.type) {
         case "ready":
+          console.log("✅ Ready message received");
           setIsListening(true);
           break;
 
         case "recording_started":
+          console.log("✅ Recording started");
           setIsListening(true);
           break;
 
         case "transcription":
+          console.log("📝 Transcription:", data.text);
           setTranscript(data.text);
           setIsListening(false);
           setIsProcessing(true);
           break;
 
         case "response":
+          console.log("💬 Response:", data.text);
           setAiResponse(data.text);
           setIsProcessing(false);
           setIsListening(true);
@@ -82,12 +86,14 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
           break;
 
         case "error":
+          console.error("❌ Error:", data.message);
           setError(data.message || "Unknown error");
           setIsProcessing(false);
           setIsListening(true);
           break;
 
         case "pong":
+          console.log("🏓 Pong");
           break;
 
         default:
@@ -98,6 +104,9 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   );
 
   const initVoiceMode = useCallback(async () => {
+    console.log("🔧 Initializing voice mode...");
+    console.log("📍 voiceUrl:", voiceUrl);
+    console.log("📍 hospitalId:", hospitalId);
     setError("");
     const wsUrl = `${voiceUrl}/api/v1/ws/voice-mode`;
     console.log("🔗 Connecting to:", wsUrl);
@@ -106,10 +115,10 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
     wsRef.current.binaryType = "arraybuffer";
 
     wsRef.current.onopen = () => {
-      console.log("📡 WS connected");
-      wsRef.current.send(
-        JSON.stringify({ type: "init", hospital_id: hospitalId })
-      );
+      console.log("✅ WebSocket connected");
+      const initMsg = { type: "init", hospital_id: hospitalId };
+      console.log("📤 Sending init:", initMsg);
+      wsRef.current.send(JSON.stringify(initMsg));
 
       keepAliveRef.current = setInterval(() => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -126,7 +135,7 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
     };
 
     wsRef.current.onclose = () => {
-      console.log("🔌 WS closed");
+      console.log("🔌 WebSocket closed");
       setIsListening(false);
       setIsProcessing(false);
       clearInterval(keepAliveRef.current);
@@ -134,6 +143,7 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   }, [voiceUrl, hospitalId, handleMessage]);
 
   const startRecording = useCallback(async () => {
+    console.log("🎤 Starting recording...");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -144,21 +154,27 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
           channelCount: 1,
         },
       });
+      console.log("✅ Got microphone stream");
 
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
       mediaRecorder.ondataavailable = (event) => {
+        console.log("📥 Audio chunk:", event.data.size, "bytes");
         audioChunksRef.current.push(event.data);
       };
 
       mediaRecorder.onstop = async () => {
+        console.log("⏹️ Recording stopped, processing...");
         const blob = new Blob(audioChunksRef.current, { type: "audio/wav" });
+        console.log("📦 Audio blob size:", blob.size);
         const arrayBuffer = await blob.arrayBuffer();
         if (wsRef.current?.readyState === WebSocket.OPEN) {
+          console.log("📤 Sending audio:", arrayBuffer.byteLength, "bytes");
           wsRef.current.send(arrayBuffer);
-          console.log("📤 Sent audio to server");
+        } else {
+          console.error("❌ WebSocket not open, state:", wsRef.current?.readyState);
         }
         stream.getTracks().forEach((t) => t.stop());
       };
@@ -178,16 +194,17 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   }, []);
 
   const stopRecording = useCallback(() => {
+    console.log("⏹️ Stopping recording...");
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
       wsRef.current.send(JSON.stringify({ type: "stop_recording" }));
       setIsListening(false);
       setIsProcessing(true);
-      console.log("⏹️ Recording stopped");
     }
   }, []);
 
   const cleanup = useCallback(() => {
+    console.log("🧹 Cleaning up...");
     clearInterval(keepAliveRef.current);
     if (mediaRecorderRef.current?.state !== "inactive") {
       mediaRecorderRef.current.stop();
@@ -199,11 +216,13 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   }, []);
 
   useEffect(() => {
+    console.log("📌 isActive changed:", isActive);
     if (isActive) initVoiceMode();
     return cleanup;
   }, [isActive]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleVoiceMode = () => {
+    console.log("🔘 Toggle voice mode, current:", isActive);
     if (isActive) {
       cleanup();
       setIsActive(false);
