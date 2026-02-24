@@ -11,12 +11,13 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
   const voiceUrl = process.env.REACT_APP_VOICE;
 
   const wsRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
+  const audioContextRef = useRef(null);
+  const processorRef = useRef(null);
   const keepAliveRef = useRef(null);
   const recordingTimeoutRef = useRef(null);
   const audioQueueRef = useRef([]);
   const isPlayingRef = useRef(false);
+  const pcmBufferRef = useRef([]);
 
   const playNextAudio = useCallback(() => {
     if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
@@ -147,28 +148,42 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
       });
       console.log("✅ Got microphone stream");
 
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
-      mediaRecorderRef.current = mediaRecorder;
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      audioContextRef.current = audioContext;
+      const source = audioContext.createMediaStreamSource(stream);
+      
+      const bufferSize = 4096;
+      const processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+      processorRef.current = processor;
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          console.log("📥 Audio chunk:", event.data.size, "bytes");
-          audioChunksRef.current.push(event.data);
+      processor.onaudioprocess = (e) => {
+        const inputData = e.inputBuffer.getChannelData(0);
+        const pcm16 = new Int16Array(inputData.length);
+        for (let i = 0; i < inputData.length; i++) {
+          pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
         }
+        pcmBufferRef.current.push(new Uint8Array(pcm16.buffer));
       };
 
-      mediaRecorder.start(100);
+      source.connect(processor);
+      processor.connect(audioContext.destination);
       setIsListening(true);
       console.log("🎤 Recording started");
 
-      // Auto-send complete WebM blob every 6 seconds
+      // Auto-send PCM every 6 seconds
       recordingTimeoutRef.current = setInterval(async () => {
-        if (audioChunksRef.current.length > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
-          const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-          const arrayBuffer = await blob.arrayBuffer();
-          console.log("📤 Sending audio blob:", arrayBuffer.byteLength, "bytes");
-          wsRef.current.send(arrayBuffer);
-          audioChunksRef.current = [];
+        if (pcmBufferRef.current.length > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+          const pcmData = new Uint8Array(
+            pcmBufferRef.current.reduce((a, b) => a + b.length, 0)
+          );
+          let offset = 0;
+          for (const chunk of pcmBufferRef.current) {
+            pcmData.set(chunk, offset);
+            offset += chunk.length;
+          }
+          console.log("📤 Sending PCM audio:", pcmData.byteLength, "bytes");
+          wsRef.current.send(pcmData);
+          pcmBufferRef.current = [];
         }
       }, 6000);
     } catch (err) {
@@ -185,9 +200,11 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
     console.log("🧹 Cleaning up...");
     clearInterval(keepAliveRef.current);
     clearInterval(recordingTimeoutRef.current);
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
     }
     wsRef.current?.close();
     wsRef.current = null;
