@@ -157,19 +157,17 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
         }
       };
 
-      mediaRecorder.start(100); // Collect data every 100ms
+      mediaRecorder.start(100);
       setIsListening(true);
       console.log("🎤 Recording started");
 
-      // Auto-send audio every 6 seconds
+      // Auto-send complete WebM blob every 6 seconds
       recordingTimeoutRef.current = setInterval(async () => {
-        if (audioChunksRef.current.length > 0) {
+        if (audioChunksRef.current.length > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
           const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
           const arrayBuffer = await blob.arrayBuffer();
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
-            console.log("📤 Sending audio:", arrayBuffer.byteLength, "bytes");
-            wsRef.current.send(arrayBuffer);
-          }
+          console.log("📤 Sending audio blob:", arrayBuffer.byteLength, "bytes");
+          wsRef.current.send(arrayBuffer);
           audioChunksRef.current = [];
         }
       }, 6000);
