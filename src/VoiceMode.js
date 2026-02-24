@@ -158,11 +158,22 @@ const VoiceMode = ({ sessionId, hospitalId, onClose }) => {
 
       processor.onaudioprocess = (e) => {
         const inputData = e.inputBuffer.getChannelData(0);
-        const pcm16 = new Int16Array(inputData.length);
+        
+        // Voice Activity Detection: calculate RMS level
+        let sum = 0;
         for (let i = 0; i < inputData.length; i++) {
-          pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
+          sum += inputData[i] * inputData[i];
         }
-        pcmBufferRef.current.push(new Uint8Array(pcm16.buffer));
+        const rms = Math.sqrt(sum / inputData.length);
+        
+        // Only buffer if audio level is above noise threshold
+        if (rms > 0.02) {
+          const pcm16 = new Int16Array(inputData.length);
+          for (let i = 0; i < inputData.length; i++) {
+            pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
+          }
+          pcmBufferRef.current.push(new Uint8Array(pcm16.buffer));
+        }
       };
 
       source.connect(processor);
